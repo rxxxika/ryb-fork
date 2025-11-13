@@ -17,4 +17,6 @@ __pycache__/
 # Ignore macOS crap
 .DS_Store
 
+# Ignore libpynq library 
 ryb_crying/libpynq-5EWCO-2023-v0.2.6.2/
+
