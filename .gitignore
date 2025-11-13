@@ -1,10 +1,20 @@
-/**/*.a
+# Ignore compiled objects and binaries
+*.o
+*.out
+*.log
+
+# Ignore build folders
+build/
+bin/
+
+# Ignore module-specific build outputs
 decision_making/bin/
 decision_making/build/
-/**/*.o
 
-actuator
+# Ignore Python cache (if any)
+__pycache__/
 
-heartbeat
+# Ignore macOS crap
+.DS_Store
 
-crying
+ryb_crying/libpynq-5EWCO-2023-v0.2.6.2/
