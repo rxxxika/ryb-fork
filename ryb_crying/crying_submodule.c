@@ -179,7 +179,7 @@ static void* thread_display(void *arg) {
 int main(void) {
     pynq_init();
 
-    //I2C setup->
+    //I2C setup ->
     switchbox_init();
     switchbox_set_pin(IO_PMODA1, SWB_IIC0_SCL);
     switchbox_set_pin(IO_PMODA2, SWB_IIC0_SDA);
@@ -209,3 +209,4 @@ int main(void) {
 
     return 0;
 }
+
