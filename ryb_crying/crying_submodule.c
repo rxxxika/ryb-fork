@@ -9,19 +9,18 @@
 #include <display.h>
 #include <fontx.h>
 
-#define IIC_INDEX            IIC0           
-#define CRYING_IIC_ADDRESS   0x40          
-#define IIC_DATA_REGISTER    0              
+#define IIC_INDEX            IIC0
+#define CRYING_IIC_ADDRESS   0x40
+#define IIC_DATA_REGISTER    0
 
-#define MIC_ADC_CHANNEL  ADC0      //change accordingly if mic is for ex. ADC1 or ADC5!!
-#define SAMPLE_RATE_HZ   8000
-#define FRAME_MS         20
-#define FRAME_SAMPLES    ((SAMPLE_RATE_HZ * FRAME_MS) / 1000)
-
-#define RING_CAPACITY    32
+#define MIC_ADC_CHANNEL      ADC0 //change accordingly if mic is for ex. ADC1 or ADC5!!
+#define SAMPLE_RATE_HZ       8000
+#define FRAME_MS             20
+#define FRAME_SAMPLES        ((SAMPLE_RATE_HZ * FRAME_MS) / 1000)
+#define RING_CAPACITY        32
 
 #define INTENSITY_FLOOR_DB   (-50.0f)
-#define CRY_INTENSITY_THR    (90)
+#define CRY_INTENSITY_THR    90
 
 typedef struct {
     int16_t data[RING_CAPACITY][FRAME_SAMPLES];
@@ -35,6 +34,10 @@ static ring_t g_ring;
 #define NUM_I2C_REGS  32
 static volatile uint32_t g_regs[NUM_I2C_REGS] = {0};
 
+static volatile int keep_running = 1;
+static uint8_t g_last_intensity = 0;
+static pthread_mutex_t g_feat_mtx = PTHREAD_MUTEX_INITIALIZER;
+
 static inline int16_t adc_raw_to_s16(uint32_t raw) {
     int centered = (int)raw - 2048;
     return (int16_t)(centered << 4);
@@ -45,7 +48,7 @@ static float rms_dbfs_int16(const int16_t *x, int n) {
     double acc = 0;
     for (int i = 0; i < n; i++) {
         double s = x[i] / 32768.0;
-        acc += s*s;
+        acc += s * s;
     }
     double rms = sqrt(acc / n);
     if (rms <= 1e-12) return -120.0f;
@@ -61,6 +64,7 @@ static uint8_t map_to_byte(float x, float xmin, float xmax) {
     if (v > 255) v = 255;
     return (uint8_t)v;
 }
+
 static void ring_init(ring_t *rb) {
     rb->head = rb->tail = rb->count = 0;
     pthread_mutex_init(&rb->mtx, NULL);
@@ -73,7 +77,7 @@ static void ring_push(ring_t *rb, const int16_t *frame) {
     while (rb->count == RING_CAPACITY)
         pthread_cond_wait(&rb->not_full, &rb->mtx);
 
-    memcpy(rb->data[rb->head], frame, sizeof(int16_t)*FRAME_SAMPLES);
+    memcpy(rb->data[rb->head], frame, sizeof(int16_t) * FRAME_SAMPLES);
     rb->head = (rb->head + 1) % RING_CAPACITY;
     rb->count++;
 
@@ -86,32 +90,31 @@ static void ring_pop(ring_t *rb, int16_t *out) {
     while (rb->count == 0)
         pthread_cond_wait(&rb->not_empty, &rb->mtx);
 
-    memcpy(out, rb->data[rb->tail], sizeof(int16_t)*FRAME_SAMPLES);
+    memcpy(out, rb->data[rb->tail], sizeof(int16_t) * FRAME_SAMPLES);
     rb->tail = (rb->tail + 1) % RING_CAPACITY;
     rb->count--;
 
     pthread_cond_signal(&rb->not_full);
     pthread_mutex_unlock(&rb->mtx);
 }
-static volatile int keep_running = 1;
-
-static uint8_t g_last_intensity = 0;
-static pthread_mutex_t g_feat_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static void* thread_adc_acquire(void *arg) {
     (void)arg;
 
     adc_init();
+
     int16_t frame[FRAME_SAMPLES];
 
     while (keep_running) {
         for (int i = 0; i < FRAME_SAMPLES; i++) {
             uint32_t raw = adc_read_channel_raw(MIC_ADC_CHANNEL);
             frame[i] = adc_raw_to_s16(raw);
-            sleep_usec(1000000 / SAMPLE_RATE_HZ);
+            sleep_msec(1);
         }
         ring_push(&g_ring, frame);
     }
+
+    adc_destroy();
     return NULL;
 }
 
@@ -130,7 +133,7 @@ static void* thread_process(void *arg) {
         g_last_intensity = cry_level;
         pthread_mutex_unlock(&g_feat_mtx);
 
-        g_regs[IIC_DATA_REGISTER] = cry_level;  
+        g_regs[IIC_DATA_REGISTER] = cry_level;
     }
     return NULL;
 }
@@ -152,9 +155,8 @@ static void* thread_display(void *arg) {
     displayFillScreen(&disp, RGB_BLACK);
 
     FontxFile fx[2];
-    InitFontx(fx, "/home/student/ryb/fonts/ILGH16XB.FNT", "");
+    InitFontx(fx, "/home/student/ryb-fork/fonts/ILGH16XB.FNT", "");
 
-    displaySetForeground(&disp, RGB_WHITE);
     displayDrawString(&disp, fx, 10, 20, (uint8_t*)"CRYING SUBMODULE", 16);
     displayDrawString(&disp, fx, 10, 50, (uint8_t*)"Cry Level:", 10);
 
@@ -167,7 +169,6 @@ static void* thread_display(void *arg) {
 
         displayDrawFillRect(&disp, 130, 40, 230, 60, RGB_BLACK);
         snprintf(buf, sizeof(buf), "%3u", level);
-        displaySetForeground(&disp, RGB_CYAN);
         displayDrawString(&disp, fx, 130, 50, (uint8_t*)buf, strlen(buf));
 
         sleep_msec(100);
@@ -178,7 +179,7 @@ static void* thread_display(void *arg) {
 int main(void) {
     pynq_init();
 
-    //I2C setup-> 
+    //I2C setup->
     switchbox_init();
     switchbox_set_pin(IO_PMODA1, SWB_IIC0_SCL);
     switchbox_set_pin(IO_PMODA2, SWB_IIC0_SDA);
@@ -186,8 +187,12 @@ int main(void) {
     iic_init(IIC_INDEX);
     iic_reset(IIC_INDEX);
 
-    iic_set_slave_mode(IIC_INDEX, CRYING_IIC_ADDRESS,
-                       (uint32_t*)g_regs, NUM_I2C_REGS);
+    iic_set_slave_mode(
+        IIC_INDEX,
+        CRYING_IIC_ADDRESS,
+        (uint32_t*)g_regs,
+        NUM_I2C_REGS
+    );
 
     ring_init(&g_ring);
 
