@@ -13,7 +13,7 @@
 #define CRYING_IIC_ADDRESS   0x40
 #define IIC_DATA_REGISTER    0
 
-#define MIC_ADC_CHANNEL      ADC0 //change accordingly if mic is for ex. ADC1 or ADC5!!
+#define MIC_ADC_CHANNEL      ADC0 // change accordingly if mic is for ex. ADC1 or ADC5!!
 #define SAMPLE_RATE_HZ       8000
 #define FRAME_MS             20
 #define FRAME_SAMPLES        ((SAMPLE_RATE_HZ * FRAME_MS) / 1000)
@@ -127,13 +127,13 @@ static void* thread_process(void *arg) {
         ring_pop(&g_ring, frame);
 
         float db = rms_dbfs_int16(frame, FRAME_SAMPLES);
-        uint8_t cry_level = map_to_byte(db, INTENSITY_FLOOR_DB, 0.0f);
+        uint8_t cry_level_raw = map_to_byte(db, INTENSITY_FLOOR_DB, 0.0f);   // 0–255 raw mapped value
+        uint8_t cry_percent   = (uint8_t)((cry_level_raw * 100) / 255);      // convert 0–255 to 0–100 %
 
         pthread_mutex_lock(&g_feat_mtx);
-        g_last_intensity = cry_level;
+        g_last_intensity = cry_percent;                                      // store 0–100 % for display
+        g_regs[IIC_DATA_REGISTER] = cry_percent;                             // send 0–100 % to I2C register 0
         pthread_mutex_unlock(&g_feat_mtx);
-
-        g_regs[IIC_DATA_REGISTER] = cry_level;
     }
     return NULL;
 }
@@ -179,7 +179,7 @@ static void* thread_display(void *arg) {
 int main(void) {
     pynq_init();
 
-    //I2C setup ->
+    // I2C setup ->
     switchbox_init();
     switchbox_set_pin(IO_PMODA1, SWB_IIC0_SCL);
     switchbox_set_pin(IO_PMODA2, SWB_IIC0_SDA);
@@ -209,4 +209,3 @@ int main(void) {
 
     return 0;
 }
-
