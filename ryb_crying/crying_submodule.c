@@ -13,15 +13,14 @@
 #define CRYING_IIC_ADDRESS   0x40
 #define IIC_DATA_REGISTER    0
 
-#define MIC_ADC_CHANNEL  ADC0      //change accordingly if mic is for ex. ADC1 or ADC5!!
-#define SAMPLE_RATE_HZ   8000
-#define FRAME_MS         20
-#define FRAME_SAMPLES    ((SAMPLE_RATE_HZ * FRAME_MS) / 1000)
-
-#define RING_CAPACITY    32
+#define MIC_ADC_CHANNEL      ADC0 //change accordingly if mic is for ex. ADC1 or ADC5!!
+#define SAMPLE_RATE_HZ       8000
+#define FRAME_MS             20
+#define FRAME_SAMPLES        ((SAMPLE_RATE_HZ * FRAME_MS) / 1000)
+#define RING_CAPACITY        32
 
 #define INTENSITY_FLOOR_DB   (-50.0f)
-#define CRY_INTENSITY_THR    (90)
+#define CRY_INTENSITY_THR    90
 
 typedef struct {
     int16_t data[RING_CAPACITY][FRAME_SAMPLES];
@@ -31,6 +30,7 @@ typedef struct {
 } ring_t;
 
 static ring_t g_ring;
+
 #define NUM_I2C_REGS  32
 static volatile uint32_t g_regs[NUM_I2C_REGS] = {0};
 
@@ -77,9 +77,10 @@ static void ring_push(ring_t *rb, const int16_t *frame) {
     while (rb->count == RING_CAPACITY)
         pthread_cond_wait(&rb->not_full, &rb->mtx);
 
-    memcpy(rb->data[rb->head], frame, sizeof(int16_t)*FRAME_SAMPLES);
+    memcpy(rb->data[rb->head], frame, sizeof(int16_t) * FRAME_SAMPLES);
     rb->head = (rb->head + 1) % RING_CAPACITY;
     rb->count++;
+
     pthread_cond_signal(&rb->not_empty);
     pthread_mutex_unlock(&rb->mtx);
 }
@@ -89,50 +90,50 @@ static void ring_pop(ring_t *rb, int16_t *out) {
     while (rb->count == 0)
         pthread_cond_wait(&rb->not_empty, &rb->mtx);
 
-    memcpy(out, rb->data[rb->tail], sizeof(int16_t)*FRAME_SAMPLES);
+    memcpy(out, rb->data[rb->tail], sizeof(int16_t) * FRAME_SAMPLES);
     rb->tail = (rb->tail + 1) % RING_CAPACITY;
     rb->count--;
+
     pthread_cond_signal(&rb->not_full);
     pthread_mutex_unlock(&rb->mtx);
 }
-static volatile int keep_running = 1;
-
-static uint8_t g_last_intensity = 0;
-static pthread_mutex_t g_feat_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static void* thread_adc_acquire(void *arg) {
     (void)arg;
-#if !USE_FAKE_INPUT
+
     adc_init();
+
     int16_t frame[FRAME_SAMPLES];
+
     while (keep_running) {
         for (int i = 0; i < FRAME_SAMPLES; i++) {
-            uint32_t raw;
-#if USE_FAKE_INPUT
-            raw = fake_adc_value();
-#else
-            raw = adc_read_channel_raw(MIC_ADC_CHANNEL);
-#endif
+            uint32_t raw = adc_read_channel_raw(MIC_ADC_CHANNEL);
             frame[i] = adc_raw_to_s16(raw);
             sleep_msec(1);
         }
         ring_push(&g_ring, frame);
     }
+
+    adc_destroy();
     return NULL;
 }
 
 static void* thread_process(void *arg) {
     (void)arg;
+
     int16_t frame[FRAME_SAMPLES];
+
     while (keep_running) {
         ring_pop(&g_ring, frame);
+
         float db = rms_dbfs_int16(frame, FRAME_SAMPLES);
         uint8_t cry_level = map_to_byte(db, INTENSITY_FLOOR_DB, 0.0f);
+
         pthread_mutex_lock(&g_feat_mtx);
         g_last_intensity = cry_level;
         pthread_mutex_unlock(&g_feat_mtx);
 
-        g_regs[IIC_DATA_REGISTER] = cry_level;  
+        g_regs[IIC_DATA_REGISTER] = cry_level;
     }
     return NULL;
 }
@@ -148,6 +149,7 @@ static void* thread_i2c(void *arg) {
 
 static void* thread_display(void *arg) {
     (void)arg;
+
     display_t disp;
     display_init(&disp);
     displayFillScreen(&disp, RGB_BLACK);
@@ -159,6 +161,7 @@ static void* thread_display(void *arg) {
     displayDrawString(&disp, fx, 10, 50, (uint8_t*)"Cry Level:", 10);
 
     char buf[32];
+
     while (keep_running) {
         pthread_mutex_lock(&g_feat_mtx);
         uint8_t level = g_last_intensity;
@@ -176,7 +179,7 @@ static void* thread_display(void *arg) {
 int main(void) {
     pynq_init();
 
-    //I2C setup-> 
+    //I2C setup ->
     switchbox_init();
     switchbox_set_pin(IO_PMODA1, SWB_IIC0_SCL);
     switchbox_set_pin(IO_PMODA2, SWB_IIC0_SDA);
@@ -206,4 +209,3 @@ int main(void) {
 
     return 0;
 }
-
